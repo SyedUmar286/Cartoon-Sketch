@@ -2,30 +2,28 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Free Art Generator</title>
+<title>Browser AI Art Generator</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.5.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.0.5/dist/body-pix.min.js"></script>
 <style>
-  body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
+  body { font-family: Arial; text-align: center; padding: 20px; background: #f0f0f0; }
   canvas { border: 1px solid #333; margin-top: 10px; max-width: 100%; }
   select, input, button { margin: 10px; padding: 10px; font-size: 16px; }
 </style>
 </head>
 <body>
-<h1>Free Art Generator</h1>
+<h1>Browser AI Art Generator</h1>
 <input type="file" id="upload" accept="image/*"><br>
 <select id="effect">
-  <option value="none">Choose Effect</option>
-  <option value="invert">Invert Colors</option>
-  <option value="grayscale">Grayscale / Sketch</option>
-  <option value="blur">Blur</option>
-  <option value="pixelate">Pixelate</option>
   <option value="cartoon">Cartoon</option>
+  <option value="sketch">Sketch / Grayscale</option>
+  <option value="invert">Invert Colors</option>
 </select>
-<button id="apply">Apply Effect</button>
-<button id="download">Download Art</button>
+<button id="apply">Apply Art</button>
+<button id="download">Download</button>
 <br>
 <canvas id="canvas"></canvas>
 
-<script src="https://cdn.jsdelivr.net/npm/glfx@0.0.8/dist/glfx.min.js"></script>
 <script>
 const upload = document.getElementById('upload');
 const canvas = document.getElementById('canvas');
@@ -54,41 +52,40 @@ upload.addEventListener('change', function(e){
   reader.readAsDataURL(file);
 });
 
-// Apply Effect
+// Apply Art
 applyBtn.addEventListener('click', function(){
   if(!originalImage) return alert('Please upload an image first!');
-  const fxCanvas = fx.canvas();
-  const texture = fxCanvas.texture(originalImage);
+  ctx.drawImage(originalImage,0,0);
+  const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+  const data = imageData.data;
+  const effect = effectSelect.value;
 
-  fxCanvas.draw(texture);
-
-  const selected = effectSelect.value;
-  switch(selected){
-    case 'invert':
-      fxCanvas.invert();
-      break;
-    case 'grayscale':
-      fxCanvas.hueSaturation(-1,0); // Grayscale / sketch
-      break;
-    case 'blur':
-      fxCanvas.triangleBlur(5);
-      break;
-    case 'pixelate':
-      fxCanvas.pixelate(originalImage.width/20);
-      break;
-    case 'cartoon':
-      fxCanvas.denoise(5).bulgePinch(originalImage.width/2,originalImage.height/2,originalImage.width/2,0.5);
-      break;
-    default:
-      fxCanvas.draw(texture);
+  for(let i=0;i<data.length;i+=4){
+    let r = data[i], g = data[i+1], b = data[i+2];
+    switch(effect){
+      case 'invert':
+        data[i] = 255-r; data[i+1] = 255-g; data[i+2] = 255-b;
+        break;
+      case 'sketch':
+        let gray = 0.3*r + 0.59*g + 0.11*b;
+        data[i] = data[i+1] = data[i+2] = gray;
+        break;
+      case 'cartoon':
+        // Cartoon effect: reduce colors + increase contrast
+        const avg = (r+g+b)/3;
+        data[i] = Math.floor(avg/64)*64;
+        data[i+1] = Math.floor(avg/64)*64;
+        data[i+2] = Math.floor(avg/64)*64;
+        break;
+    }
   }
 
-  fxCanvas.update();
-  ctx.drawImage(fxCanvas,0,0);
+  ctx.putImageData(imageData,0,0);
 });
 
-// Download Image
+// Download
 downloadBtn.addEventListener('click', function(){
+  if(!originalImage) return alert('No image to download!');
   const link = document.createElement('a');
   link.download = 'art.png';
   link.href = canvas.toDataURL();
