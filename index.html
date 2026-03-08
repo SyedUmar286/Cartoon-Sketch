@@ -2,40 +2,29 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Sketch Coloring Art Generator</title>
+<title>Sketch Art Generator</title>
 <style>
   body { font-family: Arial; text-align: center; padding: 20px; background: #f0f0f0; }
-  canvas { border: 1px solid #333; margin-top: 10px; max-width: 100%; cursor: crosshair; }
-  input, button, select { margin: 10px; padding: 10px; font-size: 16px; }
+  canvas { border: 1px solid #333; margin-top: 10px; max-width: 100%; }
+  input, button { margin: 10px; padding: 10px; font-size: 16px; }
 </style>
 </head>
 <body>
-<h1>Interactive Sketch Coloring</h1>
+<h1>Sketch Art Generator</h1>
 <input type="file" id="upload" accept="image/*"><br>
-
-<label>Choose Color:</label>
-<input type="color" id="colorPicker" value="#ff0000">
-<label>Brush Size:</label>
-<input type="number" id="brushSize" value="5" min="1" max="50">
-
-<button id="applySketch">Apply Sketch Art</button>
-<button id="clear">Clear Drawing</button>
-<button id="download">Download</button>
+<button id="apply">Apply Sketch Art</button>
+<button id="download">Download Sketch</button>
 <br>
 <canvas id="canvas"></canvas>
 
 <script>
 const upload = document.getElementById('upload');
-const applyBtn = document.getElementById('applySketch');
+const applyBtn = document.getElementById('apply');
+const downloadBtn = document.getElementById('download');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const colorPicker = document.getElementById('colorPicker');
-const brushSizeInput = document.getElementById('brushSize');
-const clearBtn = document.getElementById('clear');
-const downloadBtn = document.getElementById('download');
 
 let originalImage = null;
-let painting = false;
 
 // Upload image
 upload.addEventListener('change', function(e){
@@ -62,12 +51,14 @@ applyBtn.addEventListener('click', function(){
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
 
+  // Convert to grayscale
   for(let i=0;i<data.length;i+=4){
     let r = data[i], g = data[i+1], b = data[i+2];
     const gray = 0.3*r + 0.59*g + 0.11*b;
     data[i] = data[i+1] = data[i+2] = gray;
   }
 
+  // Invert grayscale
   const invertedData = new Uint8ClampedArray(data);
   for(let i=0;i<invertedData.length;i+=4){
     invertedData[i] = 255 - invertedData[i];
@@ -75,6 +66,7 @@ applyBtn.addEventListener('click', function(){
     invertedData[i+2] = 255 - invertedData[i+2];
   }
 
+  // Apply simple Gaussian blur to inverted image
   function blurImage(data, w, h, radius=5){
     const copy = new Uint8ClampedArray(data);
     for(let y=0;y<h;y++){
@@ -101,9 +93,9 @@ applyBtn.addEventListener('click', function(){
     }
     return copy;
   }
-
   const blurred = blurImage(invertedData, canvas.width, canvas.height, 5);
 
+  // Dodge blend: final sketch effect
   for(let i=0;i<data.length;i+=4){
     const orig = data[i];
     const blur = blurred[i];
@@ -113,33 +105,11 @@ applyBtn.addEventListener('click', function(){
   ctx.putImageData(imageData, 0, 0);
 });
 
-// Coloring / Drawing
-canvas.addEventListener('mousedown', e => painting = true);
-canvas.addEventListener('mouseup', e => painting = false);
-canvas.addEventListener('mouseleave', e => painting = false);
-
-canvas.addEventListener('mousemove', e => {
-  if(!painting) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  ctx.fillStyle = colorPicker.value;
-  ctx.beginPath();
-  ctx.arc(x, y, brushSizeInput.value, 0, Math.PI*2);
-  ctx.fill();
-});
-
-// Clear Drawing
-clearBtn.addEventListener('click', function(){
-  if(!originalImage) return;
-  ctx.drawImage(originalImage, 0, 0);
-  applyBtn.click(); // reapply sketch
-});
-
-// Download
+// Download sketch
 downloadBtn.addEventListener('click', function(){
+  if(!originalImage) return alert('No image to download!');
   const link = document.createElement('a');
-  link.download = 'colored_sketch.png';
+  link.download = 'sketch.png';
   link.href = canvas.toDataURL();
   link.click();
 });
