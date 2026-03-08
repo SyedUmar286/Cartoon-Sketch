@@ -2,39 +2,31 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Browser AI Art Generator</title>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.5.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.0.5/dist/body-pix.min.js"></script>
+<title>Sketch Art Generator</title>
 <style>
   body { font-family: Arial; text-align: center; padding: 20px; background: #f0f0f0; }
   canvas { border: 1px solid #333; margin-top: 10px; max-width: 100%; }
-  select, input, button { margin: 10px; padding: 10px; font-size: 16px; }
+  input, button { margin: 10px; padding: 10px; font-size: 16px; }
 </style>
 </head>
 <body>
-<h1>Browser AI Art Generator</h1>
+<h1>Sketch Art Generator</h1>
 <input type="file" id="upload" accept="image/*"><br>
-<select id="effect">
-  <option value="cartoon">Cartoon</option>
-  <option value="sketch">Sketch / Grayscale</option>
-  <option value="invert">Invert Colors</option>
-</select>
-<button id="apply">Apply Art</button>
-<button id="download">Download</button>
+<button id="apply">Apply Sketch Art</button>
+<button id="download">Download Sketch</button>
 <br>
 <canvas id="canvas"></canvas>
 
 <script>
 const upload = document.getElementById('upload');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-const effectSelect = document.getElementById('effect');
 const applyBtn = document.getElementById('apply');
 const downloadBtn = document.getElementById('download');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
 let originalImage = null;
 
-// Upload Image
+// Upload image
 upload.addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
@@ -44,7 +36,7 @@ upload.addEventListener('change', function(e){
     img.onload = function(){
       canvas.width = img.width;
       canvas.height = img.height;
-      ctx.drawImage(img,0,0);
+      ctx.drawImage(img, 0, 0);
       originalImage = img;
     }
     img.src = event.target.result;
@@ -52,42 +44,72 @@ upload.addEventListener('change', function(e){
   reader.readAsDataURL(file);
 });
 
-// Apply Art
+// Apply Sketch Art
 applyBtn.addEventListener('click', function(){
   if(!originalImage) return alert('Please upload an image first!');
-  ctx.drawImage(originalImage,0,0);
-  const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+  ctx.drawImage(originalImage, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
-  const effect = effectSelect.value;
 
+  // Convert to grayscale
   for(let i=0;i<data.length;i+=4){
     let r = data[i], g = data[i+1], b = data[i+2];
-    switch(effect){
-      case 'invert':
-        data[i] = 255-r; data[i+1] = 255-g; data[i+2] = 255-b;
-        break;
-      case 'sketch':
-        let gray = 0.3*r + 0.59*g + 0.11*b;
-        data[i] = data[i+1] = data[i+2] = gray;
-        break;
-      case 'cartoon':
-        // Cartoon effect: reduce colors + increase contrast
-        const avg = (r+g+b)/3;
-        data[i] = Math.floor(avg/64)*64;
-        data[i+1] = Math.floor(avg/64)*64;
-        data[i+2] = Math.floor(avg/64)*64;
-        break;
-    }
+    const gray = 0.3*r + 0.59*g + 0.11*b;
+    data[i] = data[i+1] = data[i+2] = gray;
   }
 
-  ctx.putImageData(imageData,0,0);
+  // Invert grayscale
+  const invertedData = new Uint8ClampedArray(data);
+  for(let i=0;i<invertedData.length;i+=4){
+    invertedData[i] = 255 - invertedData[i];
+    invertedData[i+1] = 255 - invertedData[i+1];
+    invertedData[i+2] = 255 - invertedData[i+2];
+  }
+
+  // Apply simple Gaussian blur to inverted image
+  function blurImage(data, w, h, radius=5){
+    const copy = new Uint8ClampedArray(data);
+    for(let y=0;y<h;y++){
+      for(let x=0;x<w;x++){
+        let rSum=0,gSum=0,bSum=0,count=0;
+        for(let dy=-radius;dy<=radius;dy++){
+          for(let dx=-radius;dx<=radius;dx++){
+            const nx = x+dx;
+            const ny = y+dy;
+            if(nx>=0 && nx<w && ny>=0 && ny<h){
+              const idx = (ny*w + nx)*4;
+              rSum += data[idx];
+              gSum += data[idx+1];
+              bSum += data[idx+2];
+              count++;
+            }
+          }
+        }
+        const idx = (y*w + x)*4;
+        copy[idx] = rSum/count;
+        copy[idx+1] = gSum/count;
+        copy[idx+2] = bSum/count;
+      }
+    }
+    return copy;
+  }
+  const blurred = blurImage(invertedData, canvas.width, canvas.height, 5);
+
+  // Dodge blend: final sketch effect
+  for(let i=0;i<data.length;i+=4){
+    const orig = data[i];
+    const blur = blurred[i];
+    data[i] = data[i+1] = data[i+2] = Math.min(255, (orig << 8)/(255-blur+1));
+  }
+
+  ctx.putImageData(imageData, 0, 0);
 });
 
-// Download
+// Download sketch
 downloadBtn.addEventListener('click', function(){
   if(!originalImage) return alert('No image to download!');
   const link = document.createElement('a');
-  link.download = 'art.png';
+  link.download = 'sketch.png';
   link.href = canvas.toDataURL();
   link.click();
 });
