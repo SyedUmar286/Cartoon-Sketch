@@ -6,12 +6,28 @@
 <style>
   body { font-family: Arial; text-align: center; padding: 20px; background: #f0f0f0; }
   canvas { border: 1px solid #333; margin-top: 10px; max-width: 100%; }
-  input, button { margin: 10px; padding: 10px; font-size: 16px; }
+  input, button, select { margin: 10px; padding: 10px; font-size: 16px; }
 </style>
 </head>
 <body>
 <h1>Sketch Art Generator</h1>
 <input type="file" id="upload" accept="image/*"><br>
+
+<!-- Brush / Coloring Controls -->
+<input type="color" id="colorPicker" value="#ff0000"><br>
+
+<select id="brushType">
+  <option value="pencil">Pencil</option>
+  <option value="marker">Marker</option>
+  <option value="eraser">Eraser</option>
+</select>
+
+<input type="number" id="brushSize" value="5" min="1" max="50">
+
+<button id="undo">Undo</button>
+<button id="redo">Redo</button>
+<button id="clear">Clear</button>
+
 <button id="apply">Apply Sketch Art</button>
 <button id="download">Download Sketch</button>
 <br>
@@ -25,6 +41,12 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 let originalImage = null;
+let drawingLayer = document.createElement('canvas');
+let drawingCtx = drawingLayer.getContext('2d');  
+
+// Undo/Redo stack
+let undoStack = [];
+let redoStack = [];
 
 // Upload image
 upload.addEventListener('change', function(e){
@@ -36,6 +58,8 @@ upload.addEventListener('change', function(e){
     img.onload = function(){
       canvas.width = img.width;
       canvas.height = img.height;
+      drawingLayer.width = canvas.width;
+      drawingLayer.height = canvas.height;
       ctx.drawImage(img, 0, 0);
       originalImage = img;
     }
@@ -66,7 +90,7 @@ applyBtn.addEventListener('click', function(){
     invertedData[i+2] = 255 - invertedData[i+2];
   }
 
-  // Apply simple Gaussian blur to inverted image
+  // Apply simple Gaussian blur
   function blurImage(data, w, h, radius=5){
     const copy = new Uint8ClampedArray(data);
     for(let y=0;y<h;y++){
@@ -95,7 +119,7 @@ applyBtn.addEventListener('click', function(){
   }
   const blurred = blurImage(invertedData, canvas.width, canvas.height, 5);
 
-  // Dodge blend: final sketch effect
+  // Dodge blend
   for(let i=0;i<data.length;i+=4){
     const orig = data[i];
     const blur = blurred[i];
@@ -105,12 +129,97 @@ applyBtn.addEventListener('click', function(){
   ctx.putImageData(imageData, 0, 0);
 });
 
-// Download sketch
+// ------------------- Coloring Layer Logic -------------------
+function saveState() {
+    undoStack.push(drawingCtx.getImageData(0,0,drawingLayer.width,drawingLayer.height));
+    redoStack = [];
+}
+
+let painting = false;
+let lastX = 0, lastY = 0;
+
+drawingLayer.addEventListener('mousedown', e => { painting=true; startDrawing(e); });
+drawingLayer.addEventListener('mouseup', e => { painting=false; });
+drawingLayer.addEventListener('mouseleave', e => { painting=false; });
+drawingLayer.addEventListener('mousemove', draw);
+
+function startDrawing(e){
+  const rect = drawingLayer.getBoundingClientRect();
+  lastX = e.clientX - rect.left;
+  lastY = e.clientY - rect.top;
+  saveState();
+}
+
+function draw(e){
+  if(!painting) return;
+  const rect = drawingLayer.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  const type = document.getElementById('brushType').value;
+  const color = type==='eraser' ? 'rgba(0,0,0,0)' : document.getElementById('colorPicker').value;
+  const size = parseInt(document.getElementById('brushSize').value);
+
+  drawingCtx.strokeStyle = color;
+  drawingCtx.lineWidth = type==='marker' ? size*2 : size;
+  drawingCtx.lineCap = type==='marker' ? 'round' : 'butt';
+  drawingCtx.globalCompositeOperation = type==='eraser' ? 'destination-out':'source-over';
+
+  drawingCtx.beginPath();
+  drawingCtx.moveTo(lastX,lastY);
+  drawingCtx.lineTo(x,y);
+  drawingCtx.stroke();
+
+  lastX = x;
+  lastY = y;
+
+  redrawCanvas();
+}
+
+function redrawCanvas(){
+  ctx.drawImage(originalImage,0,0); // pencil sketch
+  ctx.drawImage(drawingLayer,0,0);  // coloring overlay
+}
+
+// Undo / Redo
+document.getElementById('undo').addEventListener('click', ()=>{
+  if(undoStack.length===0) return;
+  redoStack.push(drawingCtx.getImageData(0,0,drawingLayer.width,drawingLayer.height));
+  const prev = undoStack.pop();
+  drawingCtx.putImageData(prev,0,0);
+  redrawCanvas();
+});
+
+document.getElementById('redo').addEventListener('click', ()=>{
+  if(redoStack.length===0) return;
+  undoStack.push(drawingCtx.getImageData(0,0,drawingLayer.width,drawingLayer.height));
+  const next = redoStack.pop();
+  drawingCtx.putImageData(next,0,0);
+  redrawCanvas();
+});
+
+// Clear
+document.getElementById('clear').addEventListener('click', ()=>{
+  drawingCtx.clearRect(0,0,drawingLayer.width,drawingLayer.height);
+  undoStack = [];
+  redoStack = [];
+  redrawCanvas();
+});
+
+// Download merged image
 downloadBtn.addEventListener('click', function(){
   if(!originalImage) return alert('No image to download!');
+  const mergedCanvas = document.createElement('canvas');
+  mergedCanvas.width = canvas.width;
+  mergedCanvas.height = canvas.height;
+  const mergedCtx = mergedCanvas.getContext('2d');
+
+  mergedCtx.drawImage(canvas,0,0);      // pencil sketch
+  mergedCtx.drawImage(drawingLayer,0,0); // coloring layer
+
   const link = document.createElement('a');
-  link.download = 'sketch.png';
-  link.href = canvas.toDataURL();
+  link.download = 'colored_sketch.png';
+  link.href = mergedCanvas.toDataURL();
   link.click();
 });
 </script>
