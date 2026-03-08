@@ -2,40 +2,62 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Sketch Coloring Art Generator</title>
+<title>Pro Sketch Coloring Studio</title>
 <style>
-  body { font-family: Arial; text-align: center; padding: 20px; background: #f0f0f0; }
+  body { font-family: Arial; text-align: center; background: #f0f0f0; padding: 20px; }
   canvas { border: 1px solid #333; margin-top: 10px; max-width: 100%; cursor: crosshair; }
-  input, button, label { margin: 5px; padding: 8px; font-size: 16px; }
+  input, button, select, label { margin: 5px; padding: 8px; font-size: 16px; }
 </style>
 </head>
 <body>
-<h1>Interactive Sketch Coloring</h1>
+<h1>Pro Sketch Coloring Studio</h1>
 <input type="file" id="upload" accept="image/*"><br>
+
+<label>Brush Type:</label>
+<select id="brushType">
+  <option value="pencil">Pencil</option>
+  <option value="marker">Marker</option>
+  <option value="eraser">Eraser</option>
+</select>
 
 <label>Brush Color:</label>
 <input type="color" id="colorPicker" value="#ff0000">
 <label>Brush Size:</label>
 <input type="number" id="brushSize" value="5" min="1" max="50">
 
-<button id="applySketch">Apply Sketch Art</button>
+<button id="applySketch">Apply Sketch</button>
+<button id="undo">Undo</button>
+<button id="redo">Redo</button>
 <button id="clear">Clear Drawing</button>
 <button id="download">Download</button>
 <br>
+
 <canvas id="canvas"></canvas>
 
 <script>
 const upload = document.getElementById('upload');
 const applyBtn = document.getElementById('applySketch');
+const undoBtn = document.getElementById('undo');
+const redoBtn = document.getElementById('redo');
 const clearBtn = document.getElementById('clear');
 const downloadBtn = document.getElementById('download');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+const brushType = document.getElementById('brushType');
 const colorPicker = document.getElementById('colorPicker');
 const brushSizeInput = document.getElementById('brushSize');
 
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
 let originalImage = null;
 let sketchImageData = null;
+
+// Layer system: drawing layer on top of sketch
+let drawingLayer = document.createElement('canvas');
+let drawingCtx = drawingLayer.getContext('2d');
+
+// Undo/Redo stack
+let undoStack = [];
+let redoStack = [];
 let painting = false;
 
 // Upload Image
@@ -46,8 +68,8 @@ upload.addEventListener('change', e => {
   reader.onload = function(event){
     const img = new Image();
     img.onload = function(){
-      canvas.width = img.width;
-      canvas.height = img.height;
+      canvas.width = drawingLayer.width = img.width;
+      canvas.height = drawingLayer.height = img.height;
       ctx.drawImage(img,0,0);
       originalImage = img;
     }
@@ -63,52 +85,124 @@ applyBtn.addEventListener('click', () => {
   const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
   const data = imageData.data;
 
-  // Convert to grayscale
+  // Grayscale
   for(let i=0;i<data.length;i+=4){
-    const r=data[i], g=data[i+1], b=data[i+2];
-    const gray = 0.3*r + 0.59*g + 0.11*b;
-    data[i] = data[i+1] = data[i+2] = gray;
+    const gray = 0.3*data[i]+0.59*data[i+1]+0.11*data[i+2];
+    data[i]=data[i+1]=data[i+2]=gray;
   }
 
   // Simple invert for sketch effect
   for(let i=0;i<data.length;i+=4){
-    data[i] = 255 - data[i];
-    data[i+1] = 255 - data[i+1];
-    data[i+2] = 255 - data[i+2];
+    data[i]=255-data[i];
+    data[i+1]=255-data[i+1];
+    data[i+2]=255-data[i+2];
   }
 
   ctx.putImageData(imageData,0,0);
   sketchImageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+
+  // Reset drawing layer
+  drawingCtx.clearRect(0,0,drawingLayer.width,drawingLayer.height);
+  undoStack = [];
+  redoStack = [];
+  redrawCanvas();
 });
 
-// Coloring / Drawing
-canvas.addEventListener('mousedown', () => painting=true);
-canvas.addEventListener('mouseup', () => painting=false);
-canvas.addEventListener('mouseleave', () => painting=false);
+// Draw on drawing layer
+function getBrushSettings(){
+  const type = brushType.value;
+  const color = brushType.value==='eraser' ? 'rgba(0,0,0,0)' : colorPicker.value;
+  const size = parseInt(brushSizeInput.value);
+  return {type,color,size};
+}
 
-canvas.addEventListener('mousemove', e => {
+canvas.addEventListener('mousedown', e => { painting = true; startDrawing(e); });
+canvas.addEventListener('mouseup', e => { painting = false; endDrawing(e); });
+canvas.addEventListener('mouseleave', e => { painting = false; endDrawing(e); });
+canvas.addEventListener('mousemove', draw);
+
+// Drawing implementation
+let lastX=0, lastY=0;
+function startDrawing(e){
+  const rect = canvas.getBoundingClientRect();
+  lastX = e.clientX - rect.left;
+  lastY = e.clientY - rect.top;
+  saveState(); // Save for undo
+}
+
+function draw(e){
   if(!painting) return;
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
-  ctx.fillStyle = colorPicker.value;
-  ctx.beginPath();
-  ctx.arc(x, y, brushSizeInput.value, 0, Math.PI*2);
-  ctx.fill();
+  const {type,color,size} = getBrushSettings();
+  drawingCtx.strokeStyle = color;
+  drawingCtx.lineWidth = size;
+  drawingCtx.lineCap = type==='marker' ? 'round' : 'butt';
+  drawingCtx.globalCompositeOperation = type==='eraser' ? 'destination-out':'source-over';
+
+  drawingCtx.beginPath();
+  drawingCtx.moveTo(lastX,lastY);
+  drawingCtx.lineTo(x,y);
+  drawingCtx.stroke();
+
+  lastX = x;
+  lastY = y;
+  redrawCanvas();
+}
+
+function endDrawing(e){
+  painting = false;
+}
+
+// Redraw main canvas with sketch + drawing layer
+function redrawCanvas(){
+  ctx.putImageData(sketchImageData,0,0);
+  ctx.drawImage(drawingLayer,0,0);
+}
+
+// Undo/Redo
+function saveState(){
+  undoStack.push(drawingCtx.getImageData(0,0,drawingLayer.width,drawingLayer.height));
+  redoStack = [];
+}
+
+undoBtn.addEventListener('click', () => {
+  if(undoStack.length===0) return;
+  redoStack.push(drawingCtx.getImageData(0,0,drawingLayer.width,drawingLayer.height));
+  const prev = undoStack.pop();
+  drawingCtx.putImageData(prev,0,0);
+  redrawCanvas();
+});
+
+redoBtn.addEventListener('click', () => {
+  if(redoStack.length===0) return;
+  undoStack.push(drawingCtx.getImageData(0,0,drawingLayer.width,drawingLayer.height));
+  const next = redoStack.pop();
+  drawingCtx.putImageData(next,0,0);
+  redrawCanvas();
 });
 
 // Clear Drawing
 clearBtn.addEventListener('click', () => {
-  if(!sketchImageData) return;
-  ctx.putImageData(sketchImageData,0,0);
+  drawingCtx.clearRect(0,0,drawingLayer.width,drawingLayer.height);
+  undoStack = [];
+  redoStack = [];
+  redrawCanvas();
 });
 
-// Download
+// Download final merged image
 downloadBtn.addEventListener('click', () => {
   if(!originalImage) return alert('No image to download!');
+  const mergedCanvas = document.createElement('canvas');
+  mergedCanvas.width = canvas.width;
+  mergedCanvas.height = canvas.height;
+  const mergedCtx = mergedCanvas.getContext('2d');
+  mergedCtx.putImageData(sketchImageData,0,0);
+  mergedCtx.drawImage(drawingLayer,0,0);
   const link = document.createElement('a');
-  link.download = 'sketch_colored.png';
-  link.href = canvas.toDataURL();
+  link.download = 'final_art.png';
+  link.href = mergedCanvas.toDataURL();
   link.click();
 });
 </script>
